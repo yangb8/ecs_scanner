@@ -1,0 +1,86 @@
+package or;
+
+option java_outer_classname = "BPlusTreeRecords";
+
+import "SegmentLocationRecord.proto";
+import "PageTypes.proto";
+
+// a key -> value pair
+//   when a leaf page then key points to a value (if we store value externally because
+//       it is huge then we can use address)
+//   when an index page then key points to an address
+message PagePair {
+    required PageItem key = 1;
+    optional PageItem value = 2;
+    optional SegmentLocation address = 3;
+}
+
+
+// currently tree pages are either
+// 1. the actual tree pages, which are classified as root, index, leaf
+// 2. bloom filter pages, containing a serialized bloom filter
+// 3. occupancy pages, which contains a list of occupancy entries
+message BPlusTreePage {
+    // page type
+    enum PageType {
+        BLANK = 0; // new page
+        ROOT = 1;  // root page; consists of key->seg loc
+        INDEX = 2; // index page; consists of key->seg loc
+        LEAF = 3;  // leaf page; consists of key->data
+        BLOOM = 4; // bloom page; contains bloom filter
+        OCCUPANCY = 5; // delta occupancy page; contains delta changes since last version
+    }
+    required PageType type = 1 [default = BLANK];
+
+    // page entries -- only when page is ROOT, INDEX, or LEAF
+    repeated PagePair elements = 2;
+    // currently unused
+    optional SegmentLocation checkpoint = 3;
+
+    // bloom filter entry -- only when page is BLOOM
+    optional PageItem bloomFilter = 4;
+
+    // occupancy delta entry -- only when page is OCCUPANCY
+    repeated OccupancyEntry_V2 occupancy = 5;
+}
+
+
+// Release 1 and 1.1
+message OccupancyPair {
+    required SegmentLocation segmentLocation = 1;
+    required uint64 occupied = 2 [default = 0]; // size in bytes
+    optional uint64 timeWhenZero = 3; // time when occupancy dropped to zero
+}
+
+message OccupancyMap {
+    repeated OccupancyPair map = 1;
+}
+
+// Release 2
+message OccupancyEntry_V2 {
+    optional string chunkId = 1;
+    optional SegmentLocation location = 2;
+    optional sint64 occupancy = 3; // occupancy change (could be positive or negative)
+}
+
+// the listing of OccupancyEntries could be larger than the physical limit of a page
+// thus the listing may need to span multiple OccupancyPages
+message Occupancy_V2 {
+    repeated SegmentLocation occupancyPages = 1;
+    optional uint64 timestamp = 2;
+}
+
+// BPlusTreeRecord is a merege of v1 and v2
+message BPlusTreeRecord {
+    optional SegmentLocation indexRoot = 1;
+    optional SegmentLocation occupancyMap = 2; // depricated in release 2
+    repeated SegmentLocation bloomFilter = 3;
+
+    // Release 2 specific
+    optional Occupancy_V2 occupancyDeltaBTreeChunks = 4;
+    optional uint64 treeVersion = 5; // monotonically increasing value with each sync
+    optional Occupancy_V2 occupancyDeltaRepoChunks = 6;
+    optional Occupancy_V2 occupancyFullBTreeChunks = 7;
+    optional Occupancy_V2 occupancyFullRepoChunks = 8;
+
+}

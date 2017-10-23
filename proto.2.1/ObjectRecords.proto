@@ -1,0 +1,211 @@
+package or;
+
+option java_outer_classname = "ObjectRecords";
+
+import "SegmentLocationRecord.proto";
+import "BPlusTreeRecords.proto";
+
+/*
+ * Versioning related info
+ */
+message VersionInfo {
+    // version related operation type
+    enum OperationType {
+        NEW = 0;        // new version creation
+        MARKER = 1;     // delete marker
+        REMOVE = 2;     // remove a specific version
+        UPDATE = 3;     // update a specific version
+    }
+
+    required OperationType type = 1;
+
+    // true if this is a null id version, only present if is NEW or MARKER type
+    optional bool isNullId = 2;
+
+    // the version removed by an update, only present if is REMOVE type
+    optional uint64 removedVersion = 3;
+
+    // when the version removal happened, only present if is REMOVE type
+    optional uint64 removedTime = 4;
+
+    // the version get updated, only present if is UPDATE type
+    optional uint64 updatedVersion = 5;
+}
+
+message SystemMetadata {
+    required string key = 1;
+    optional string value = 2;
+}
+
+message HeadSystemMetadata {
+    required string key = 1;
+    optional string value = 2;
+
+    optional bool isDeleted = 3;
+}
+
+message UserMetadata {
+    required string key = 1;
+    // TODO: possibly add a type field to ensure only one of these is set
+    optional bool isDeleted = 2;
+    optional string textValue = 3;
+    optional bytes  binaryValue = 4;
+}
+
+message DataRange {
+    // The '-1' value of the objectOffset means the data offset in the
+    // object is unknown. The process needs to construct the full mapping
+    // by reading the latest index file and scanning the update files (the
+    // latest index version ~ the latest update version).
+    required int64 objectOffset = 1 [default = -1];
+
+    // object data length
+    // -1 value for objectLength means the data segment length is unknown.
+    // The actual data segment length is determined by reading the size of the
+    // file being pointed to and adjusting for the file offset.
+    required uint64 objectLength = 2;
+}
+
+message DataIndex {
+    // updated object segment
+    required DataRange dataRange = 1;
+
+    // location of the object segment
+    // if segment location is null, the object data is stored in the same file along
+    // with the the metadata record (UMR/IMR).
+    // TODO: enforce these constraints in the code
+    optional SegmentLocation segmentLocation = 2;
+
+    // the priority for this data
+    required int64 segmentPriority = 3 [default = -1];
+}
+
+/*
+ * The metadata record in the index file, include all system
+ * metadata, user metadata and data indices.
+ * SS: Too bad GPB doesn't do message type inheritance, otherwise IMR could be a
+ * derivative of UMR
+ */
+message IndexMetadataRecord {
+
+    repeated SystemMetadata sysMd = 1;
+    optional bool hasMoreSysMd = 2 [default = false];
+
+    repeated UserMetadata userMd = 3;
+    optional bool hasMoreUserMd = 4 [default = false];
+
+    // IndexMetadataRecord may contain at most one of the following:
+    // * One data index and no SegmentLocation -- object data is stored inline in the
+    //   index file
+    // * A list of data indices, each with valid SegmentLocation -- each index
+    //   points to a file that contains an object data segment
+    // * BPlusTreeRecord -- pointer to the root of a BPlusTree structured data indices.
+    //   Note that BPlusTree structured indices are not planned for the near term, and
+    //   will be implemented in a later release.
+    // If the object does not contain any data, the IndexMetadataRecord will not
+    // contain any of the above.
+    // TODO: if BPlusTree is not in the horizon for object index maintanance,
+    // TODO: we can combine IMR and UMR
+    repeated DataIndex dataIndices = 5;
+    optional bool hasMoreDataIndices = 6 [default = false];
+
+    // if any of the above booleans is true, then reposIMRLocation contains the list of
+    // SegmentLocations of the record written to file
+    repeated SegmentLocation reposIMRLocations = 7;
+
+    optional BPlusTreeRecord bPlusTreeRecord = 8;
+
+    // Possibly updated head system metadata in the index file
+    repeated HeadSystemMetadata headSysMd = 9;
+    optional bool hasMoreHeadSysMd = 10 [default = false];
+}
+
+message SystemMetadataSet {
+    repeated SystemMetadata sysMd = 1;
+    required bool hasMoreMetadata = 2 [default = false];
+    repeated SegmentLocation repoFileLocations = 3;
+}
+
+message UserMetadataSet {
+    repeated UserMetadata userMd = 1;
+    required bool hasMoreMetadata = 2 [default = false];
+    repeated SegmentLocation repoFileLocations = 3;
+}
+
+message HeadMetadataSet {
+    repeated HeadSystemMetadata headMd = 1;
+    required bool hasMoreMetadata = 2 [default = false];
+    repeated SegmentLocation repoFileLocations = 3;
+}
+
+// This is used to serialize all the overflow metadata into repo file.
+message MetadataSet {
+    repeated HeadSystemMetadata headMd = 1;
+    repeated SystemMetadata sysMd = 2;
+    repeated UserMetadata userMd = 3;
+}
+
+// This is used to record the process.
+// We need to execute the following in sequence:
+// 1. update metadata and index range entries.
+// 2. update compaction marker.
+// 3. insert jobs to delete deprecated entries.
+// Use sfixed64 to make overflow calculation simpler.
+message CompactionMarker {
+    required sfixed64 lastIndexedSequence = 1;
+
+    // Sorted version history, from the latest to the oldest
+    // We keep the version history here so that when the last version
+    // of the object is removed, we know which one is the (new) current version.
+    repeated sfixed64 versionHistoryDesc = 2;
+
+    // nullVersionStartSequence is used to track the start sequence number of the
+    // latest null sequence.
+    // If there is a null version before version 1 and then we suspended versioning and
+    // create a new null version, we need to update this field so that the next read
+    // will not load indexes for the old null version.
+    optional sfixed64 nullVersionStartSequence = 3;
+
+    // In case there are lots of versions, this entry can overflow to repo chunks.
+    repeated SegmentLocation repoFileLocations = 4;
+}
+
+message VersionHistory {
+    repeated sfixed64 versions = 1;
+}
+
+/*
+ * The metadata record in the update file.
+ *
+ * The update file format:
+ *   The following metadata record size, 4 bytes (int).
+ *   Metadata record.
+ *   Data.
+ */
+message UpdateMetadataRecord {
+
+    // Possibly updated system metadata in the update file
+    repeated SystemMetadata sysMd = 1;
+    optional bool hasMoreSysMd = 2 [default = false];
+
+    // Possibly updated user metadata in the update file
+    repeated UserMetadata userMd = 3;
+    optional bool hasMoreUserMd = 4 [default = false];
+
+    // List of indices pointing to data segments that correspond to this update
+    repeated DataIndex dataIndices = 5;
+    optional bool hasMoreDataIndices = 6 [default = false];
+
+    // if any of the above booleans is true, or if the request contains inline data
+    // that is written to repository file, then reposUMRLocations contains the list of
+    // SegmentLocations of the record written to file
+    repeated SegmentLocation reposUMRLocations = 7;
+
+    // Possibly updated head system metadata in the update file
+    repeated HeadSystemMetadata headSysMd = 8;
+    optional bool hasMoreHeadSysMd = 9 [default = false];
+}
+
+message CrossReferenceRecord {
+    required string versionId = 1;
+}

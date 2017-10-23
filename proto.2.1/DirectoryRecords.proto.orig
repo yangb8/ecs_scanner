@@ -1,0 +1,753 @@
+package com.emc.storageos.data.object.directoryService;
+
+import "com/emc/storageos/data/object/impl/ObjectRecords.proto";
+import "com/emc/storageos/data/object/utils/PreconditionRecord.proto";
+import "com/emc/storageos/data/object/utils/ObjectQuery.proto";
+import "com/emc/storageos/data/object/common/PaxosRecords.proto";
+import "com/emc/storageos/data/object/types/SchemaKeyRecords.proto";
+import "com/emc/storageos/data/object/ipc/protocol/bucket/Bucket.proto";
+import "com/emc/storageos/objcontrol/object/shared/acl/AclG.proto";
+import "com/emc/storageos/data/object/directoryService/NodeMode.proto";
+
+option java_outer_classname = "DirectoryRecords";
+
+
+// The detail object segment info
+message ObjectSegmentInfo {
+    // Object segment may include UpdateMetadataRecord/IndexMetadataRecord (not both).
+
+    // The update metadata record of this segment. Used for entries of typ OU.
+    // Due to size limits on what the DirectoryTable can store, this might be a partial
+    // record.
+    optional com.emc.storageos.data.object.impl.UpdateMetadataRecord segmentUMR = 1;
+
+    // The index metadata record of this segment. Used for entries of typ OI.
+    // Due to size limits on what the DirectoryTable can store, this might be a partial
+    // record.
+    optional com.emc.storageos.data.object.impl.IndexMetadataRecord segmentIMR = 2;
+}
+
+// The detail object update record
+message DirectoryUpdateRecord {
+    // The object segment in this update
+    required ObjectSegmentInfo segment = 1;
+}
+
+// The messages between Directory Client and Server.
+
+enum DirectoryOperationStatus {
+    // the common status
+    SUCCESS = 0;
+    ERROR_INTERNAL = 1;
+    ERROR_TABLE_FULL = 2;
+    ERROR_DEVICE_FULL = 3;
+
+    // the status for KV operations
+    ERROR_KEY_EXIST = 20;
+    ERROR_KEY_NOT_FOUND = 21;
+
+    // the status for object operations
+    ERROR_OBJECT_NOT_FOUND = 30;
+    ERROR_ACCESS_DENIED = 31;
+    ERROR_OBJECT_SEGMENT_EXIST = 32;
+    ERROR_INACTIVE_MPU_UPLOAD = 33;
+    ERROR_OBJECT_EXPIRED = 34;
+    ERROR_VERSION_NOT_FOUND = 35;
+    ERROR_OBJECT_INVALID_RANGE = 36;
+    ERROR_OBJECT_UNDER_RETENTION = 37;
+    ERROR_VERSION_IS_MARKER = 38;
+    ERROR_REQUEST_THROTTLING = 39;
+    ERROR_OBJECT_EXIST = 40;
+
+    // the status for request precondition checking
+    ERROR_PRECONDITION_FAILED = 50;
+    ERROR_MATCH = 51;
+    ERROR_UNMODIFIED = 52;
+}
+
+
+// The Object Server related requests
+
+message ObjectCreateRequest {
+    required string objectId = 1;
+    //list entry timestamp
+    required int64 parentTimestamp = 2;
+    required DirectoryUpdateRecord updateRecord = 3;
+
+    // id for tracking cross reference (COPY and cross zone update)
+    optional string crossReferenceId = 4;
+
+    // if should skip object existance check, create delete marker or an object
+    optional bool skipExistsCheck = 5;
+
+    // if versioning is OFF, only present when create delete marker
+    optional bool isVersioningOff = 6;
+
+    // keypool id and key name for adding delete list-entry job,
+    // only present when create delete marker
+    optional string keypoolId = 7;
+
+    optional string keyName = 8;
+
+    repeated string chunkIdList = 9;
+
+    optional bool checkAclForDeletion = 10;
+
+    optional string uid = 11;
+
+    repeated string groups = 12;
+}
+
+message ObjectCreateResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    // The assigned sequence number
+    optional int64 sequenceNum = 2;
+
+    // the object mtime
+    optional int64 mtime = 3;
+}
+
+message ObjectPrepareCopyRequest {
+    // object id of source
+    required string objectId = 1;
+
+    // version id of source
+    optional string versionId = 2;
+
+    // object id of target
+    required string targetObjectId = 3;
+
+    // id for tracking COPY reference
+    required string crossReferenceId = 4;
+
+    required string targetCos = 5;
+
+    required string fileAccessMode = 6;
+
+    required string prevFileAccessMode = 7;
+
+    required int64 fileAccessStartVersion = 8;
+
+    required int64 fileAccessEndVersion = 9;
+
+    required string uid = 10;
+
+    repeated string groups = 11;
+
+    // user-specified requestPreconditions that must be validated prior to COPY
+    optional com.emc.storageos.data.object.utils.RequestPreconditions requestPreconditions = 12;
+
+    // offset and length in source object when copy to an MPU part
+    optional int64 offset = 13;
+
+    optional int64 length = 14;
+
+    // mapping of owner to previous Bucket Owners
+    optional com.emc.storageos.data.object.ipc.protocol.bucket.BucketOwnerChange ownerChanged = 15;
+
+    optional string targetZone = 16;
+}
+
+message ObjectPrepareCopyResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    // the system, user metadata and data range info the source copy
+    repeated com.emc.storageos.data.object.impl.SystemMetadata sysMd = 2;
+
+    repeated com.emc.storageos.data.object.impl.UserMetadata userMd = 3;
+
+    repeated com.emc.storageos.data.object.impl.DataIndex dataIndices = 4;
+}
+
+message ObjectCompleteMPURequest {
+    required string objectId = 1;
+
+    required DirectoryUpdateRecord updateRecord = 2;
+
+    required string keypoolId = 3;
+
+    required string uploadId = 4;
+
+    required int64 parentTimestamp = 5;
+}
+
+message ObjectCompleteMPUResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    // The assigned sequence number for this mpu complete
+    optional int64 sequenceNum = 2;
+
+    // the object mtime for MPU complete
+    optional int64 mtime = 3;
+}
+
+message ObjectUploadPartRequest {
+    required string objectId = 1;
+
+    required com.emc.storageos.data.object.impl.UpdateMetadataRecord updateRecord = 2;
+
+    required string keypoolId = 3;
+
+    required string uploadId = 4;
+
+    required int32 partNum = 5;
+
+    // id for tracking cross reference
+    optional string crossReferenceId = 6;
+
+    repeated string chunkIdList = 7;
+}
+
+message ObjectUploadPartResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    // The assigned sequence number for this part upload
+    optional int64 sequenceNum = 2;
+}
+
+message ObjectAbortUploadRequest {
+    required string objectId = 1;
+
+    required string keypoolId = 2;
+
+    required string uploadId = 3;
+
+    required com.emc.storageos.data.object.types.SchemaKey tEntrySchemaKey = 4;
+}
+
+message ObjectAbortUploadResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+// The general update for the object. Object Server will assign the update 
+// sequence number for it, maintain the mtime, etc.
+// The special purpose update should go through separate protocols.
+message ObjectUpdateRequest {
+    required string objectId = 1;
+
+    required DirectoryUpdateRecord updateRecord = 2;
+
+    required string fileAccessMode = 3;
+
+    required string prevFileAccessMode = 4;
+
+    required int64 fileAccessStartVersion = 5;
+
+    required int64 fileAccessEndVersion = 6;
+
+    // the uid of this request for acl check.
+    // if the update request doesn't need acl check, not set it.
+    optional string uid = 7;
+
+    // the target version of this update
+    optional string versionId = 8;
+
+    // user-specified requestPreconditions that must be validated prior to committing the update
+    optional com.emc.storageos.data.object.utils.RequestPreconditions requestPreconditions = 9;
+
+    optional string absoluteExpiryDate = 10;
+
+    optional string expiryInDays = 11;
+
+    optional string expiryRuleId = 12;
+
+    //the groups, for upgrade so separate with uid
+    repeated string groups = 13;
+
+    optional bool isPrivilegedOperation = 14;
+
+    // id for tracking cross reference
+    optional string crossReferenceId = 15;
+
+    required string keypoolId = 16;
+
+    //record chunkIds for updating object
+    repeated string chunkIdList = 17;
+
+    // mapping of owner to previous Bucket Owners
+    optional com.emc.storageos.data.object.ipc.protocol.bucket.BucketOwnerChange ownerChanged = 18;
+}
+
+message ObjectUpdateResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    // The assigned sequence number for this update
+    optional int64 sequenceNum = 2;
+
+    // The version id that this update applies to. If the request sets the
+    // target version, this field will be null as client already knows it.
+    optional string versionId = 3;
+
+    // The size of the object before this update was written. This is always set by
+    // DirectoryServer (as it doesn't differentiate between types of update), but is only
+    // used by clients for append operations
+    optional int64 prevSize = 4 [default = -1];
+
+    // the object mtime
+    optional int64 mtime = 5;
+}
+
+// Create the update with specified sequence number.
+// If the specified sequence is occupied, the request will fail.
+// 
+// Currently this is only used by the file access, to create the special
+// update record for the consolidated data. 
+// Also requires to update the object mtime, as file access doesn't know 
+// whether NFS access will change the object now. This could be further 
+// improved to detect the object change.
+message ObjectMarkerUpdateRequest {
+    required string objectId = 1;
+
+    required DirectoryUpdateRecord updateRecord = 2;
+
+    // the marker update sequence number.
+    required int64 markerSeqNum = 3;
+}
+
+message ObjectMarkerUpdateResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+// Create the update for version removal. Doesn't need to update mtime.
+message ObjectRemoveVersionRequest {
+    required string objectId = 1;
+
+    // The update record actually only includes VersionInfo
+    required DirectoryUpdateRecord updateRecord = 2;
+}
+
+message ObjectRemoveVersionResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    // if the removed version is delete marker
+    optional bool isDeleteMarker = 2;
+}
+
+message ObjectListEntryCreateRequest {
+    required string keypoolId = 1;
+    required string keyName = 2;
+    required string objectId = 3;
+    optional string objectOwnerZone = 4;
+}
+
+message ObjectListEntryCreateResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+    required int64 timestamp = 2;
+    optional string objectOwnerZone = 3;
+}
+
+message ObjectListEntryRemoveRequest {
+    required string keypoolId = 1;
+    required string keyName = 2;
+    required int64 timestamp = 3;
+}
+
+message ObjectListEntryGetRequest {
+    required string keypoolId = 1;
+    required string keyName = 2;
+}
+
+message ObjectListEntryGetResponse{
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+    optional string objectOwnerZone = 2;
+}
+
+message ObjectListEntryRemoveResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+// The general key-value request for misc usages.
+// For example, store all object names for the keypool listing, the key
+// is keypoolid.objectname, the value is objectId. Or store the object file
+// entry, the key is like objectId.childname, the value includes like
+// the repository file pointer etc.
+message DirectoryKVEntry {
+    required com.emc.storageos.data.object.types.SchemaKey schemaKey = 1;
+    required bytes value = 2;
+}
+
+message DirectoryInsertKVRequest {
+    required DirectoryKVEntry entry = 1;
+
+    // by default key will not be replaced if already exists, if this
+    // flag presents and is true, replace the entry even it exists
+    optional bool replaceIfExists = 2;
+
+    // if the specified key exist int the same DT, reject the insertKV request
+    optional com.emc.storageos.data.object.types.SchemaKey schemaKeyToCheck = 3;
+}
+
+message DirectoryInsertKVResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+enum DirectoryOperationType {
+    INSERT = 0;
+    REMOVE = 1;
+}
+
+message DirectoryOperation {
+    required DirectoryKVEntry entry = 1;
+    required DirectoryOperationType operationType = 2;
+}
+
+message DirectoryBatchExecKVRequest {
+    repeated DirectoryOperation dirOperation = 1;
+    required com.emc.storageos.data.object.types.SchemaKey routingKey = 2;
+    optional com.emc.storageos.data.object.types.SchemaKey lockKey = 3;
+}
+
+message DirectoryBatchExecKVResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+message DirectoryGetKVRequest {
+    required com.emc.storageos.data.object.types.SchemaKey schemaKey = 1;
+    // by default it's to get level 0 kv, but could be specified
+    optional int32 level = 2 [default = 0];
+}
+
+message DirectoryGetKVResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    optional DirectoryKVEntry entry = 2;
+}
+
+message DirectoryGetFloorKVRequest {
+    required com.emc.storageos.data.object.types.SchemaKey key = 2;
+}
+
+message DirectoryGetFloorKVResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    optional DirectoryKVEntry entry = 2;
+}
+
+message DirectoryRemoveKVRequest {
+    required com.emc.storageos.data.object.types.SchemaKey schemaKey = 1;
+
+}
+
+message DirectoryRemoveKVResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+message DirectoryListKVRequest {
+    optional com.emc.storageos.data.object.types.SchemaKey schemaListPrefix = 1;
+    // where to begin listing
+    optional com.emc.storageos.data.object.types.SchemaKey schemaToken = 2;
+
+    // roll up entries to prefix+delimiter
+    optional string delimiter = 3;
+
+    // max number keys to return.  number returned may be less.
+    optional int32 maxKeys = 4;
+
+    optional bool includeUncommitted = 5;
+}
+
+message ListPrefixGroup {
+    required DirectoryKVEntry prefix = 1;
+
+    repeated DirectoryKVEntry entries = 2;
+}
+
+message DirectoryListKVResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    repeated DirectoryKVEntry entries = 2;
+
+    repeated ListPrefixGroup prefixGroups = 3;
+
+    optional com.emc.storageos.data.object.types.SchemaKey schemaToken = 4;
+}
+
+//key is oid of a directory
+message FileSystemRevertEntry {
+    required string parentOid = 1;
+    required string fileName = 2;
+}
+
+// key is "parentID.childName";
+// a unified structure for the value entry of keypool listing and file system directory listing
+message  DirectoryTableListValueEntry {
+    enum ListValueEntryType {
+            KEYPOOL = 0;
+            DIRECTORY = 1;
+            NAMESPACE = 2;
+    }
+
+    required ListValueEntryType type = 1 [default = KEYPOOL];
+    required string oid = 2;
+    required int64 timestamp = 3;
+    optional string objectOwnerZone = 4;
+}
+
+message ObjectId {
+    required string objectId = 1;
+    optional string versionId = 2;
+}
+
+message DataIndicesQueryContinueMsg {
+    optional int64 ceilingUpdateSeq = 1;
+    optional int64 objectOffset = 2;
+}
+
+message ObjectQueryRequest {
+    // a list objects to query
+    repeated string objectIds = 1; // deprepated post v1.1, use objectVersionIds
+    repeated ObjectId objectVersionIds = 2;
+
+    // the system metadata to bring back in the response
+    optional bool getAllSysMd = 3 [default = false];
+    repeated string sysMd = 4;
+
+    optional bool getAllUmd = 5 [default = false];
+    repeated string umd = 6;
+
+    optional bool getAllHeadSmd = 7 [default = false];
+    repeated string headSmd = 8;
+
+    optional bool getDataIndices = 9 [default = false];
+    repeated com.emc.storageos.data.object.impl.DataRange dataRanges = 10;
+
+    // used to check on DT server if the received message is from v1.1,
+    // in v1.1 message this field would not be present
+    optional string messageVersion = 11 [ default = "1.2"];
+
+    optional bool skipExpiryCheck = 12 [default = true];
+
+    repeated com.emc.storageos.data.object.utils.ObjectQueryFilter filterConditions = 13;
+
+    // uid of this request for acl check.
+    // if the request doesn't need acl check (list bucket objects), don't set this
+    optional string uid = 14;
+
+    // groups this user belongs to
+    repeated string groups = 15;
+
+    // file access related state for validation
+    // used only for point object query
+    optional string fileAccessMode = 16;
+    optional string prevFileAccessMode = 17;
+    optional int64 fileAccessStartVersion = 18 [default = -1];
+    optional int64 fileAccessEndVersion = 19 [default = -1];
+
+    optional bool skipFileAccessCheck = 20 [default = false];
+
+    // mapping of owner to previous Bucket Owners
+    optional com.emc.storageos.data.object.ipc.protocol.bucket.BucketOwnerChange ownerChanged = 21;
+
+    optional DataIndicesQueryContinueMsg dataIndicesQueryContinueMsg = 22;
+    optional bool getVersions = 23 [default = false];
+}
+
+message ObjectDataIndicesForRange {
+    required com.emc.storageos.data.object.impl.DataRange dataRange = 1;
+    repeated com.emc.storageos.data.object.impl.DataIndex dataIndices = 2;
+}
+
+message ObjectDataIndicesResult {
+    // if index is large then dataIndices filled upto maxEntries
+    // starting from continuation token
+    repeated ObjectDataIndicesForRange dataIndicesForRange = 1;
+    // the following are used to create continuation message on client
+    // without listing all the updates
+    optional DataIndicesQueryContinueMsg continueToken = 2;
+}
+
+message GetObjectVersionsResultEntry {
+    optional string eTag = 1;
+    optional uint64 lastModified= 2;
+    optional uint64 size = 3;
+    optional uint64 sizeOnDevice = 4;
+    optional bool isDeleteMarker = 5;
+    optional string ownerId = 6;
+    optional bool isLatest = 7;
+    optional string versionId = 8;
+}
+
+message GetObjectVersionsResult {
+    optional bool isDeleted = 2;
+    repeated GetObjectVersionsResultEntry entries = 3;
+}
+
+message ObjectQueryEntry {
+    required string objectId = 1;
+    repeated com.emc.storageos.data.object.impl.SystemMetadata sysMd = 2;
+    repeated com.emc.storageos.data.object.impl.UserMetadata umd = 3;
+    repeated com.emc.storageos.data.object.impl.HeadSystemMetadata headSmd = 4;
+    optional ObjectDataIndicesResult dataIndicesResult = 5;
+    optional DirectoryOperationStatus status = 6 [default = SUCCESS];
+    optional GetObjectVersionsResult versionsResult = 8;
+}
+
+message ObjectQueryResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+
+    repeated ObjectQueryEntry entries = 2;
+
+    optional string messageVersion = 3 [ default = "1.2"]; 
+
+    // TODO for now, just bring back all required sys metadatas.
+    // While some metadata such as acl may be too big to bring
+    // back for all objects in one response. Support pagination later.
+}
+
+message GetObjInfoRequest {
+    required string uid = 1;
+    required string namespace = 2;
+    required string bucket = 3;
+    required string key = 4;
+}
+
+message GetObjInfoResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+    optional string cos = 2;
+    optional string objId = 3;
+}
+
+message StartDtCreationRequest {
+    required string vArray = 1;
+    required bool confirmReceipt = 2 [default = false];
+}
+
+message StartDtDeletionRequest {
+     required string vArray = 1;
+     required bool recreate = 2;
+     required int32 currentEpoch = 3;
+     required int32 nextEpoch = 4;
+ }
+
+message StartDtDeletionResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+message StartDtCreationResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+message DirectoryForceSealRequest {
+
+}
+
+message DirectoryForceSealResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+message ResourceTableBootstrapCompletenessRequest {
+    required string directoryId = 1;
+
+    required string rgId = 2;
+
+    //indicate it is namespace or keypool or other type
+    required string type = 3;
+
+    required string zoneId = 4;
+}
+
+message ResourceTableBootstrapCompletenessResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+}
+
+message KeyPoolRg {
+    required string rgId = 1;
+}
+
+message DirectoryPaxosAcceptRequest {
+    required com.emc.storageos.data.object.types.SchemaKey schemaKey = 1;
+    required uint32 level = 2;
+    required uint64 ballot = 3;
+    required string uuid = 4;
+    optional bytes value = 5;
+    optional com.emc.storageos.data.object.common.EnclosingRecordType recordType = 6;
+    optional string cos = 9; // must be set, but differes for local and remote requests
+    optional string rgId = 10;
+    optional string requestId = 11;
+    optional bool isDelete = 12 [default = false];
+
+    // special reqeust for leader election
+    optional string leader = 13;
+    optional uint64 leaderEpoch = 14 [default = 0];
+    optional uint64 leaderBallot = 15 [default = 0];
+}
+
+message DirectoryPaxosCommitRequest {
+    optional string cos = 1;  // local requests will set it, remote will be filled at receiver
+    required com.emc.storageos.data.object.types.SchemaKey schemaKey = 2;
+    required uint32 level = 3;
+    required uint64 ballot = 4;
+    required string uuid = 5;
+    optional bytes value = 6;
+    optional com.emc.storageos.data.object.common.EnclosingRecordType recordType = 7;
+    optional string requestId = 8;
+
+    // special reqeust for leader election
+    optional bool electionRequest = 9 [default = false];
+    optional string candidate = 10;
+    optional uint64 leaderEpoch = 11 [default = 0];
+    optional uint64 leaderBallot = 12 [default = 0];
+}
+
+message DirectoryPaxosInitiateAbortRequest {
+    optional string rgId = 1;
+    optional string cos = 2;
+    required com.emc.storageos.data.object.types.SchemaKey schemaKey = 3;
+    required uint32 level = 4;
+    required uint64 ballot = 5;
+    repeated string zones = 6;
+    optional com.emc.storageos.data.object.common.EnclosingRecordType recordType = 7;
+    optional string requestId = 8;
+}
+
+message DirectoryPaxosAbortRequest {
+    optional string cos = 1;
+    required com.emc.storageos.data.object.types.SchemaKey schemaKey = 2;
+    required uint32 level = 3;
+    required uint64 ballot = 4;
+    optional uint64 leaderEpoch = 5;
+    optional com.emc.storageos.data.object.common.EnclosingRecordType recordType = 6;
+    optional string requestId = 7;
+}
+
+message DirectoryPaxosQueryRequest {
+    optional string cos = 1;  // local requests will set it, remote will be filled at receiver
+    required com.emc.storageos.data.object.types.SchemaKey schemaKey = 2;
+    required uint32 level = 3;
+    optional com.emc.storageos.data.object.common.EnclosingRecordType recordType = 4;
+    optional string requestId = 5;
+}
+
+message DirectoryPaxosReadRequest {
+    optional string cos = 1;  // local requests will set it, remote will be filled at receiver
+    required com.emc.storageos.data.object.types.SchemaKey schemaKey = 2;
+    required uint32 level = 3;
+    optional com.emc.storageos.data.object.common.EnclosingRecordType recordType = 4;
+    optional string requestId = 5;
+}
+
+message DirectoryPaxosResponse {
+    required DirectoryOperationStatus status = 1 [default = SUCCESS];
+    optional com.emc.storageos.data.object.common.SyncState state = 2;
+    optional bytes value = 3;
+    optional uint64 ballot = 4 [default = 0];
+    optional string uuid = 5;
+    optional uint64 lastConfirmedBallot = 6;
+
+    optional string leader = 7;
+    optional sint64 leaderEpoch = 8 [default = -1];
+    optional sint64 leaderBallot = 9 [default = -1];
+    optional com.emc.storageos.data.object.common.SyncState leaderState = 10;
+}
+
+message GetObTableCCMarkerRequest {
+       required string directoryId = 1;
+}
+
+message GetObTableCCMarkerResponse {
+       required DirectoryOperationStatus status = 1 [default = SUCCESS];
+       optional int64 major = 2;
+       optional int64 minor = 3;
+}
+

@@ -1,0 +1,41 @@
+package or;
+
+option java_outer_classname = "LockInfoRecord";
+
+enum LockType {
+    Shared = 1;
+    Exclusive = 2;
+}
+
+enum LockStatus {
+    Granted = 1;
+    Denied = 2;
+}
+
+enum LockOperationType {
+    Lock = 1;
+    Unlock = 2;
+    Cancel = 3;
+    Test = 4;
+}
+
+message LockOwner {
+    required string owner = 1;
+    required string ownerPrefix = 2;
+}
+
+message ByteRange {
+    required int64 offset = 1;
+    required int64 length = 2;
+}
+
+message LockInfo {
+    // lock range info
+    required ByteRange lockRange = 1;
+    required LockOperationType lockOperationType = 2;
+    required LockType lockType = 3;
+    required LockOwner owner = 4;
+    optional bool isBlocking = 5;
+    optional string lockSpace = 6;
+    optional string cookie = 7;
+}

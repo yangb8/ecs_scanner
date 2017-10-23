@@ -1,0 +1,44 @@
+package or;
+
+option java_outer_classname = "SegmentLocationRecord";
+
+message CompressInfo {
+    // Snappy compression offers faster compression/decompression 
+    // while the Java zip compression offers better compression ratios.
+    enum CompressAlgo {
+        SNAPPY = 0;
+        // DEFLATE = 1;
+    }
+
+    required CompressAlgo algo = 1 [default = SNAPPY];
+}
+
+message RangeInfo {
+    // offset in logical range
+    optional int64 relativeOffset = 1 [default = 0];
+    // end offset in logical range
+    optional int64 relativeEndOffset = 2 [default = -1];
+}
+
+message SegmentLocation {
+    // chunk on which the segment lays
+    optional string chunkId = 1;
+
+    // the start offset of segment within the container
+    optional int64 offset = 2 [default = 0];
+
+    // the end offset (exclusive) of segment within the container
+    optional int64 endOffset = 3 [default = -1];
+
+    optional CompressInfo compressInfo = 4;
+
+    // data range info
+    optional RangeInfo rangeInfo = 5;
+
+    // if data validation needed
+    optional bool isValidationNeeded = 6 [default = true];
+    
+    // used for zkbtree
+    optional string zkPath = 7;
+
+}

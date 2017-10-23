@@ -1,0 +1,58 @@
+package or;
+
+import "SchemaKeyRecords.proto";
+
+// prolog to journal file
+message JournalHeader {
+    // block size journal has been configured with
+    required int32 blockSize = 1;
+}
+
+// the unique id for one DT instance
+message DirTableInstanceID {
+    // the DirectoryTable id this journal belongs to.
+    required string directoryId = 1;
+
+    // the uuid for the DT instance that writes this log.
+    required string ownerInstanceId = 2;
+}
+
+// The detail DirectoryTable log header. 
+// DT log is a Key-Value pair. The Key will be included in the header.
+// The Value part is not included, as the Value may be big.
+// The format of one log entry is:
+//   header size + header + Value
+message JournalDirTableLogHeader {
+    enum WriteType {
+        PUT_KEY = 0;
+        REMOVE_KEY = 1;
+        // remove prefix is obsolete, should not be used.
+        REMOVE_PREFIX_KEYS = 2;
+        // The dummy entry inserted for DT to update its journal liveness
+        DUMMY_ENTRY = 3;
+    }
+
+    required WriteType type = 1;
+
+    required int64 timestamp = 2;
+
+    // suppressed at v2
+    optional string key = 3;
+
+    // size of the following payload
+    optional int32 payloadLength = 4;
+
+    // a unique DT instance id
+    optional DirTableInstanceID dtInstanceId = 5;
+
+    // new key for the SchemaKey
+    optional SchemaKey schemaKey = 6;
+
+    // The unique id for this log.
+    // If the underline device only supports append, one log is possible
+    // to be appended twice. For example, the device client meets some network
+    // error and retries the append, or the device internally appends twice.
+    // Log needs to use ID to check whether the entry is logged or not, to avoid
+    // replaying one log twice.
+    // optional int64 id = 5;
+}

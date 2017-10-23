@@ -1,0 +1,28 @@
+package or;
+
+import "ObjectRecords.proto";
+
+option java_outer_classname = "DirectoryRecords";
+
+
+// The detail object segment info
+message ObjectSegmentInfo {
+    // Object segment may include UpdateMetadataRecord/IndexMetadataRecord (not both).
+
+    // The update metadata record of this segment. Used for entries of typ OU.
+    // Due to size limits on what the DirectoryTable can store, this might be a partial
+    // record.
+    optional UpdateMetadataRecord segmentUMR = 1;
+
+    // The index metadata record of this segment. Used for entries of typ OI.
+    // Due to size limits on what the DirectoryTable can store, this might be a partial
+    // record.
+    optional IndexMetadataRecord segmentIMR = 2;
+}
+
+// The detail object update record
+message DirectoryUpdateRecord {
+    // The object segment in this update
+    required ObjectSegmentInfo segment = 1;
+}
+

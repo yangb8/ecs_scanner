@@ -1,0 +1,20 @@
+package or;
+
+import "SchemaKeyRecords.proto";
+
+message PageItem {
+    enum DataFormat {
+        JAVA = 0;
+        GPB = 1;
+    }
+    enum DataClass {
+        String = 0;
+        Long = 1;
+        Schema = 2;
+        DataIndex = 10;
+    }
+    optional bytes data = 1;
+    optional SchemaKey key = 2;
+    optional DataFormat dataFormat = 3 [default = JAVA]; // default data format is JAVA
+    optional DataClass dataClass = 4 [default = String]; // default data class is String
+}
